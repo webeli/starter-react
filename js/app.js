@@ -17,6 +17,7 @@
 /** @jsx React.DOM */
 
 var YourApp = React.createClass({
+  mixins: [ReactFireMixin],
   componentWillMount: function() {
     // Create a Firebase ref, see: https://firebase.com/docs/web/libraries/react/guide
     var ref = new Firebase('https://<YOUR-FIREBASE-APP>.firebaseio.com');
