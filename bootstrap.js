@@ -15,38 +15,117 @@
  */
 
 var fs = require('fs');
-var sys = require('sys')
 var exec = require('child_process').exec;
-function puts(error, stdout, stderr) { sys.puts(stdout) }
+var os = require('os');
 
-function replaceStringInFile(path, find, replace) {
-  fs.readFile(__dirname + '/' + path, 'utf8', function(error, data) {
-    if (err) {
-      throw new Error('Error reading file ' + __dirname + '/' + path + ': ' + error);
+const TMP_DIR = os.tmpdir() + "/fb_bootstrap";
+
+function main(RSVP, name, dest) {
+  /* Utility Methods */
+  function replaceStringInFile(path, find, replace) {
+    return new RSVP.Promise(function (resolve, reject) {
+      fs.readFile(dest + '/' + path, 'utf8', function(error, data) {
+        if (error) {
+          reject('Error reading file ' + dest + '/' + path + ': ' + error);
+        }
+
+        var replacedFile = data.replace(find, replace);
+
+        fs.writeFile(dest + '/' + path, replacedFile, function(error) {
+          if (error) {
+            reject('Error writing file ' + dest + '/' + path + ': ' + error);
+          } else {
+            resolve();
+          }
+        });
+      });
+    });
+  }
+
+  function promisedExec(command) {
+    return new RSVP.Promise(function (resolve, reject) {
+      exec(command, function (err, stdout, stderr) {
+        if (err) reject(err);
+        else resolve(stdout);
+      });
+    });
+  }
+
+  /* Repo Specific Methods */
+  function checkForBower() {
+    console.log("Looking for local Bower...");
+    return new RSVP.Promise(function (resolve, reject) {
+      exec("bower -v", function (err, stdout, stderr) {
+        if (err) {
+          console.log("Temporarily install Bower...");
+          promisedExec("npm install bower --prefix " + TMP_DIR)
+            .then(resolve.bind(resolve, "temporary"))
+            .catch(reject);
+        } else {
+          resolve("local");
+        }
+      })
+    });
+  }
+
+  function installBowerDependencies(location) {
+    console.log("Installing Bower dependecies...");
+    var bower_path, command;
+
+    if (location == "temporary") {
+      bower_path = TMP_DIR + "/node_modules/.bin/bower";
+    } else {
+      bower_path = "bower";
     }
 
-    var replacedFile = data.replace(find, replace);
+    command = [bower_path, "install", "--config.cwd="+ dest].join(" ");
 
-    fs.writeFile(__dirname + '/' + path, replacedFile, function(error) {
-      if (err) {
-        throw new Error('Error writing file ' + __dirname + '/' + path + ': ' + error);
-      }
-    });
+    return promisedExec(command);
+  }
+
+  function renameToFirebaseApp() {
+    console.log("Renaming application...");
+    return RSVP.all(['./js/app.js', './html/index.html', './bower.json'].map(function (file) {
+      return replaceStringInFile(file, /<YOUR-FIREBASE-APP>/g, name);
+    }));
+  }
+
+  /* Bootstrap */
+  return new RSVP.Promise(function (resolve, reject) {
+    checkForBower()
+      .then(installBowerDependencies)
+      .then(renameToFirebaseApp)
+      .then(resolve)
+      .catch(reject);
   });
 }
 
-function main() {
-  // Namespace renaming
-  var args = process.argv.slice(2);
-  var name = args[0];
-  if (name) {
-    replaceStringInFile('./js/app.js', /<YOUR-FIREBASE-APP>/g, name);
-    replaceStringInFile('./html/index.html', /<YOUR-FIREBASE-APP>/g, name);
-    replaceStringInFile('./bower.json', /<YOUR-FIREBASE-APP>/g, name);
-  }
-
-  // bower install
-  exec("bower install", puts);
+function getNodeModule(moduleName, cb) {
+  exec("npm install " + moduleName + " --prefix " + os.tmpdir() + "/fb_bootstrap", function (err, stdout, stderr) {
+    if (err)
+      cb(err);
+    else
+      cb(null, require(TMP_DIR + "/node_modules/" + moduleName));
+  });
 }
 
-main();
+module.exports = {
+  setup: main
+}
+
+if (require.main === module) {
+  getNodeModule("rsvp", function (err, RSVP) {
+    if (err) {
+      throw new Error(err);
+    } else {
+      main
+        .apply(this, [RSVP].concat(process.argv.slice(2)))
+        .then(function () {
+          console.log("Bootstrapped!");
+        })
+        .catch(function () {
+          console.error("Something went wrong!");
+        })
+    }
+  });
+}
